@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "ICS IDMS",
-    "slug": "ics-idms",
+    "slug": "ics-idms-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -50,7 +50,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "434419bb-4dda-4879-b461-c72e79c45068"
+        "projectId": "92a19d5e-529e-4b4a-af38-2f9951f2375b"
       }
     }
   }
