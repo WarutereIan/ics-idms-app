@@ -19,6 +19,7 @@ import { OfflineBanner } from '@/components/common/OfflineBanner';
 import { useForm } from '@/contexts/FormContext';
 import { useNetwork } from '@/contexts/NetworkContext';
 import { Form } from '@/types/forms';
+import { config } from '@/config/env';
 
 type SortOption = 'newest' | 'oldest' | 'title-asc' | 'title-desc';
 type FilterOption = 'all' | 'downloaded' | 'not-downloaded';
@@ -99,7 +100,10 @@ export default function DownloadFormScreen() {
 
   // Check if all selectable (non-downloaded) forms are selected - must be before renderFormItem
   const selectableForms = allForms.filter(form => !isFormDownloaded(form.id));
-  const allSelected = selectableForms.length > 0 && selectedForms.size === selectableForms.length;
+  // TEST MODE: "all selected" means 1 form is selected
+  const allSelected = config.TEST_MODE 
+    ? selectedForms.size === 1
+    : selectableForms.length > 0 && selectedForms.size === selectableForms.length;
   const hasSelection = selectedForms.size > 0;
 
   useEffect(() => {
@@ -146,6 +150,32 @@ export default function DownloadFormScreen() {
     // Get all non-downloaded forms (for selection)
     const selectableForms = allForms.filter(form => !isFormDownloaded(form.id));
     
+    // TEST MODE: Limit selection to 1 form
+    if (config.TEST_MODE) {
+      // Check if there's already 1 downloaded form
+      const downloadedCount = downloadedForms.length;
+      if (downloadedCount >= 1) {
+        Alert.alert(
+          'Test Mode',
+          'App is in Test Mode. You can only download 1 form total. Please delete the existing downloaded form before selecting another one.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+      
+      if (selectedForms.size === 1) {
+        // Deselect
+        setSelectedForms(new Set());
+      } else {
+        // Select only the first selectable form
+        const firstForm = selectableForms[0];
+        if (firstForm) {
+          setSelectedForms(new Set([firstForm.id]));
+        }
+      }
+      return;
+    }
+    
     if (selectedForms.size === selectableForms.length) {
       // Deselect all
       setSelectedForms(new Set());
@@ -160,12 +190,47 @@ export default function DownloadFormScreen() {
     if (newSelected.has(formId)) {
       newSelected.delete(formId);
     } else {
+      // TEST MODE: Check if there's already 1 downloaded form
+      if (config.TEST_MODE) {
+        const downloadedCount = downloadedForms.length;
+        if (downloadedCount >= 1) {
+          Alert.alert(
+            'Test Mode',
+            'App is in Test Mode. You can only download 1 form total. Please delete the existing downloaded form before selecting another one.',
+            [{ text: 'OK' }]
+          );
+          return;
+        }
+        
+        // TEST MODE: Only allow 1 form to be selected at a time
+        if (newSelected.size >= 1) {
+          Alert.alert(
+            'Test Mode',
+            'App is in Test Mode. You can only select 1 form at a time. Please deselect the current form first.',
+            [{ text: 'OK' }]
+          );
+          return;
+        }
+      }
       newSelected.add(formId);
     }
     setSelectedForms(newSelected);
   };
 
   const handleDownloadForm = async (form: Form & { projectName: string }) => {
+    // TEST MODE: Check if there's already 1 downloaded form
+    if (config.TEST_MODE) {
+      const downloadedCount = downloadedForms.length;
+      if (downloadedCount >= 1) {
+        Alert.alert(
+          'Test Mode',
+          'App is in Test Mode. You can only download 1 form total. Please delete the existing downloaded form before downloading another one.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+    }
+
     try {
       await downloadForm(form, form.projectName);
       Alert.alert('Success', `Successfully downloaded "${form.title}".`);
@@ -182,11 +247,39 @@ export default function DownloadFormScreen() {
       return;
     }
 
+    // TEST MODE: Check if there's already 1 downloaded form
+    if (config.TEST_MODE) {
+      const downloadedCount = downloadedForms.length;
+      if (downloadedCount >= 1) {
+        Alert.alert(
+          'Test Mode',
+          'App is in Test Mode. You can only download 1 form total. Please delete the existing downloaded form before downloading another one.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+      
+      // TEST MODE: Limit downloads to 1 form
+      if (selectedForms.size > 1) {
+        Alert.alert(
+          'Test Mode',
+          'App is in Test Mode. You can only download 1 form at a time. Please select only one form.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+    }
+
     try {
       let successCount = 0;
       let errorCount = 0;
 
-      for (const formId of selectedForms) {
+      // TEST MODE: Only process the first selected form
+      const formsToDownload = config.TEST_MODE 
+        ? Array.from(selectedForms).slice(0, 1)
+        : Array.from(selectedForms);
+
+      for (const formId of formsToDownload) {
         const form = filteredAndSortedForms.find((f) => f.id === formId);
         if (form) {
           try {
@@ -367,7 +460,14 @@ export default function DownloadFormScreen() {
       
       {/* Header */}
       <View className="flex-row justify-between items-center px-4 py-3 bg-card border-b border-border">
-        <Text className="text-lg font-semibold text-foreground">Download form</Text>
+        <View className="flex-1">
+          <Text className="text-lg font-semibold text-foreground">Download form</Text>
+          {config.TEST_MODE && (
+            <Text className="text-xs text-orange-600 font-medium mt-0.5">
+              TEST MODE: Limited to 1 form
+            </Text>
+          )}
+        </View>
         <View className="flex-row gap-4">
           <TouchableOpacity
             className="p-1"
@@ -492,7 +592,10 @@ export default function DownloadFormScreen() {
           {/* Bottom Action Bar */}
           <View className="flex-row px-4 pt-3 bg-card border-t border-border gap-2" style={{ paddingBottom: Math.max(insets.bottom, 8) }}>
             <Button
-              title={allSelected ? 'Deselect All' : 'Select All'}
+              title={config.TEST_MODE 
+                ? (selectedForms.size === 1 ? 'Deselect' : 'Select One')
+                : (allSelected ? 'Deselect All' : 'Select All')
+              }
               onPress={handleSelectAll}
               variant="outline"
               style={{ flex: 1 }}

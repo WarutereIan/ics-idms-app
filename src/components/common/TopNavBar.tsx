@@ -6,7 +6,9 @@ import { Menu } from 'lucide-react-native';
 import { Text } from '@/components/ui/text';
 import { Button } from '@/components/ui';
 import { Card, CardContent } from '@/components/ui';
+import { Badge } from '@/components/ui';
 import { useAuth } from '@/contexts/AuthContext';
+import { config } from '@/config/env';
 import { cn } from '@/lib/utils';
 
 interface TopNavBarProps {
@@ -49,12 +51,12 @@ export function TopNavBar({ selectedProjectId, onProjectChange }: TopNavBarProps
     <>
       <View className="flex-row items-center justify-between px-4 py-3 bg-card border-b border-border">
         {/* Left: Project Name */}
-        <View className="flex-1 min-w-0">
+        <View className="flex-1 min-w-0 flex-row items-center gap-2">
           {isAuthenticated && currentProject ? (
             <TouchableOpacity
               onPress={() => setProjectMenuVisible(true)}
               activeOpacity={0.7}
-              className="flex-row items-center gap-2"
+              className="flex-row items-center gap-2 flex-1 min-w-0"
             >
               <MaterialIcons name="folder" size={20} color="#10B981" />
               <Text className="text-base font-semibold text-foreground truncate" numberOfLines={1}>
@@ -66,6 +68,11 @@ export function TopNavBar({ selectedProjectId, onProjectChange }: TopNavBarProps
             <Text className="text-base font-semibold text-foreground">
               ICS IDMS
             </Text>
+          )}
+          {config.TEST_MODE && (
+            <Badge variant="outline" className="bg-orange-50 border-orange-300">
+              <Text className="text-xs font-semibold text-orange-700">TEST MODE</Text>
+            </Badge>
           )}
         </View>
 

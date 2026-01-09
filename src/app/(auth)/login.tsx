@@ -5,6 +5,7 @@ import {
   Platform,
   ScrollView,
   TouchableOpacity,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -74,9 +75,11 @@ export default function LoginScreen() {
               {/* Header */}
               <View className="items-center mb-6">
                 {/* Logo */}
-                <View className="h-12 w-12 mb-4 bg-primary rounded-lg items-center justify-center">
-                  <Text className="text-primary-foreground text-xl font-bold"></Text>
-                </View>
+                <Image
+                  source={require('../../../assets/images/logo.png')}
+                  className="h-24 w-24 mb-4 rounded-lg"
+                  resizeMode="contain"
+                />
                 <Text className="text-2xl font-bold text-foreground mb-2 text-center">
                   ICS IDMS Login
                 </Text>
@@ -161,18 +164,7 @@ export default function LoginScreen() {
               </View>
             </View>
 
-            {/* Signup Link */}
-            <View className="pt-4 items-center">
-              <Text className="text-sm text-muted-foreground text-center">
-                Don't have an organization account?{' '}
-                <Text
-                  className="text-primary font-medium"
-                  onPress={() => router.push('/(auth)/signup' as any)}
-                >
-                  Create one now
-                </Text>
-              </Text>
-            </View>
+           
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

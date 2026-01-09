@@ -28,6 +28,20 @@ export class SyncService {
    * Sync all ready-to-send form responses to the server
    */
   async syncReadyToSendResponses(): Promise<SyncResult> {
+    // Check if user profile exists before attempting sync
+    // getCurrentUserProfile will try to fetch from API if not in local storage
+    const userProfile = await getCurrentUserProfile();
+    if (!userProfile) {
+      const errorMessage = 'User profile not found. Please sign in to continue.';
+      console.error('❌ [SyncService] Cannot sync: user profile not found (checked local storage and API)');
+      return {
+        success: false,
+        syncedCount: 0,
+        failedCount: 0,
+        errors: [{ responseId: 'all', error: errorMessage }],
+      };
+    }
+
     const responses = await getFormResponses('ready_to_send');
     const result: SyncResult = {
       success: true,
@@ -291,6 +305,7 @@ export class SyncService {
 
   /**
    * Create a single backend API response submission
+   * Matches the format used by PublicFormFiller.tsx for consistency with backend
    */
   private async createSingleSupabaseResponse(
     response: LocalFormResponse,
@@ -304,19 +319,29 @@ export class SyncService {
   ): Promise<void> {
     // Extract all valid question IDs from the form
     const validQuestionIds = new Set<string>();
+    const allQuestions: any[] = [];
     downloadedForm.formData.sections.forEach((section: any) => {
       section.questions.forEach((question: any) => {
         validQuestionIds.add(question.id);
+        allQuestions.push(question);
       });
     });
 
-    // Process response data - strip instance suffixes and filter valid question IDs
-    const processedData: Record<string, any> = {};
+    // Separate main responses from conditional responses
+    // The responseData may contain both merged responses and conditionalResponses
+    const mainResponses: Record<string, any> = {};
+    const conditionalResponses: Record<string, any> = {};
     
+    // Get conditional data if stored separately (for backward compatibility)
+    const storedConditionalData = (response as any).conditionalData || {};
+    
+    // Process response data - separate main and conditional responses
+    // For repeatable sections, instance-scoped IDs (e.g., "q1__i0") will be processed
     Object.entries(responseData).forEach(([questionId, value]) => {
       if (value === null || value === undefined || value === '') return;
       
       // Strip instance suffix if present (e.g., "questionId__i0" -> "questionId")
+      // We'll handle instances via the source metadata, but need base IDs for processing
       const baseQuestionId = questionId.replace(/__i\d+$/, '');
       
       if (!validQuestionIds.has(baseQuestionId)) {
@@ -324,9 +349,83 @@ export class SyncService {
         return;
       }
       
-      // Use base question ID as key, keep first non-null value
-      if (!(baseQuestionId in processedData)) {
-        processedData[baseQuestionId] = value;
+      // Check if this is a conditional question by finding its parent
+      const isConditional = allQuestions.some((q: any) => {
+        if (q.type === 'SINGLE_CHOICE' || q.type === 'MULTIPLE_CHOICE') {
+          const options = q.options || [];
+          return options.some((opt: any) => 
+            opt.conditionalQuestions && 
+            opt.conditionalQuestions.some((condQ: any) => condQ.id === baseQuestionId)
+          );
+        }
+        return false;
+      });
+      
+      if (isConditional) {
+        // Store conditional response with base question ID
+        // For repeatable sections, we'll merge all instances - backend handles via source metadata
+        if (!(baseQuestionId in conditionalResponses)) {
+          conditionalResponses[baseQuestionId] = value;
+        }
+      } else {
+        // Use base question ID as key, keep first non-null value
+        if (!(baseQuestionId in mainResponses)) {
+          mainResponses[baseQuestionId] = value;
+        }
+      }
+    });
+    
+    // Also include any conditional data stored separately
+    Object.entries(storedConditionalData).forEach(([questionId, value]) => {
+      if (value === null || value === undefined || value === '') return;
+      const baseQuestionId = questionId.replace(/__i\d+$/, '');
+      if (validQuestionIds.has(baseQuestionId) && !conditionalResponses[baseQuestionId]) {
+        conditionalResponses[baseQuestionId] = value;
+      }
+    });
+
+    // Merge conditional responses into parent question responses (matching PublicFormFiller format)
+    const processedData: Record<string, any> = { ...mainResponses };
+    
+    Object.entries(conditionalResponses).forEach(([conditionalQuestionId, value]) => {
+      // Find the parent question that contains this conditional question
+      const parentQuestion = allQuestions.find((question: any) => {
+        if (question.type === 'SINGLE_CHOICE' || question.type === 'MULTIPLE_CHOICE') {
+          const options = question.options || [];
+          return options.some((opt: any) => 
+            opt.conditionalQuestions && 
+            opt.conditionalQuestions.some((condQ: any) => condQ.id === conditionalQuestionId)
+          );
+        }
+        return false;
+      });
+      
+      if (parentQuestion) {
+        const parentQuestionId = parentQuestion.id;
+        const parentResponse = processedData[parentQuestionId];
+        
+        if (parentResponse === undefined || parentResponse === null) {
+          // Parent question has no response yet, create object with conditional response
+          processedData[parentQuestionId] = {
+            [conditionalQuestionId]: value
+          };
+        } else if (typeof parentResponse === 'object' && !Array.isArray(parentResponse)) {
+          // Parent response is already an object, add conditional response to it
+          processedData[parentQuestionId] = {
+            ...parentResponse,
+            [conditionalQuestionId]: value
+          };
+        } else {
+          // Parent response is a simple value, convert to object with both parent and conditional responses
+          processedData[parentQuestionId] = {
+            _parentValue: parentResponse,
+            [conditionalQuestionId]: value
+          };
+        }
+      } else {
+        // No parent found - this shouldn't happen, but include it as a separate key
+        console.warn(`⚠️ [SyncService] Conditional question ${conditionalQuestionId} has no parent, including as separate key`);
+        processedData[conditionalQuestionId] = value;
       }
     });
 
@@ -334,13 +433,15 @@ export class SyncService {
       formId: response.formId,
       questionCount: Object.keys(processedData).length,
       isComplete: response.isComplete,
+      mainResponsesCount: Object.keys(mainResponses).length,
+      conditionalResponsesCount: Object.keys(conditionalResponses).length,
     });
 
     // Submit to backend API
     const apiResponse = await apiClient.post('/forms/responses', {
       formId: response.formId,
       respondentId: localUserProfile.userId,
-      respondentEmail: localUserProfile.email,
+      respondentEmail: localUserProfile.email || '', // Email is optional, use empty string if not available
       isComplete: response.isComplete,
       source: sourceValue,
       data: processedData,

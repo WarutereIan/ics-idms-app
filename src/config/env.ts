@@ -6,6 +6,7 @@ export const config = {
   SUPABASE_URL: Constants.expoConfig?.extra?.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL,
   SUPABASE_ANON_KEY: Constants.expoConfig?.extra?.supabaseAnonKey || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
   NODE_ENV: __DEV__ ? 'development' : 'production',
+  TEST_MODE: process.env.EXPO_PUBLIC_TEST_MODE === 'true' || Constants.expoConfig?.extra?.testMode === true,
 } as const;
 
 // Validate required environment variables

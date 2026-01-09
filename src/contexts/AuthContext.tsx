@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { AppState, AppStateStatus } from 'react-native';
 import { User } from '@/types/dashboard';
 import { authAPI } from '@/lib/api/auth';
+import { saveUserProfile, clearUserProfile } from '@/services/offlineStorage';
 
 // Backend session type (compatible with Supabase Session structure)
 interface BackendSession {
@@ -17,7 +18,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isRefreshing: boolean;
   login: (email: string, password: string) => Promise<LoginResult>;
-  logout: () => void;
+  logout: () => Promise<void>;
   updateProfile: (updates: Partial<User>) => Promise<User>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 }
@@ -62,6 +63,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           const userProfile = await authAPI.getProfile();
           setUser(userProfile);
+          // Save user profile to local storage for offline sync
+          // organizationId is optional for single-organization systems
+          if (userProfile && userProfile.id) {
+            try {
+              await saveUserProfile(userProfile.id, userProfile.id, userProfile.organizationId, userProfile.email);
+              console.log('AuthContext - User profile saved to local storage for sync');
+            } catch (saveError) {
+              console.error('Error saving user profile to local storage:', saveError);
+              // Don't throw - auth can still work without local storage, but sync will fail
+            }
+          }
         } catch (error) {
           console.error('Error fetching user profile after sign in:', error);
         }
@@ -70,6 +82,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(null);
         lastValidSessionRef.current = null;
         lastRefreshTimeRef.current = 0;
+        // Clear user profile from local storage
+        try {
+          await clearUserProfile();
+          console.log('AuthContext - User profile cleared from local storage');
+        } catch (error) {
+          console.error('Error clearing user profile from local storage:', error);
+          // Don't throw - sign out should still succeed
+        }
       } else if (event === 'TOKEN_REFRESHED' && session) {
         setSession(session);
         lastValidSessionRef.current = session;
@@ -117,6 +137,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           try {
             const userProfile = await authAPI.getProfile();
             setUser(userProfile);
+            // Update user profile in local storage for offline sync
+            // organizationId is optional for single-organization systems
+            if (userProfile && userProfile.id) {
+              try {
+                await saveUserProfile(userProfile.id, userProfile.id, userProfile.organizationId, userProfile.email);
+              } catch (saveError) {
+                console.error('Error saving user profile to local storage:', saveError);
+                // Don't throw - auth can still work without local storage, but sync will fail
+              }
+            }
           } catch (error) {
             console.error('Error refreshing user profile:', error);
           }
@@ -166,6 +196,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const userProfile = await authAPI.getProfile();
           console.log('AuthContext - user profile loaded');
           setUser(userProfile);
+          // Save user profile to local storage for offline sync
+          // organizationId is optional for single-organization systems
+          if (userProfile && userProfile.id) {
+            try {
+              await saveUserProfile(userProfile.id, userProfile.id, userProfile.organizationId, userProfile.email);
+              console.log('AuthContext - User profile saved to local storage for sync');
+            } catch (saveError) {
+              console.error('Error saving user profile to local storage:', saveError);
+              // Don't throw - auth can still work without local storage, but sync will fail
+            }
+          }
         } catch (error) {
           console.error('Error fetching user profile:', error);
         }
@@ -202,6 +243,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         lastValidSessionRef.current = newSession;
         lastRefreshTimeRef.current = Date.now();
         
+        // Save user profile to local storage for offline sync
+        // organizationId is optional for single-organization systems
+        if (userProfile && userProfile.id) {
+          try {
+            await saveUserProfile(userProfile.id, userProfile.id, userProfile.organizationId, userProfile.email);
+            console.log('AuthContext - User profile saved to local storage after login');
+          } catch (saveError) {
+            console.error('Error saving user profile to local storage:', saveError);
+            // Don't throw - auth can still work without local storage, but sync will fail
+          }
+        }
+        
         return { success: true, user: userProfile };
       } else {
         return { success: false, error: result.error };
@@ -217,7 +270,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
     // Sign out from backend API
     authAPI.logout().catch(console.error);
     
@@ -226,6 +279,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     lastValidSessionRef.current = null;
     lastRefreshTimeRef.current = 0;
+    
+        // Clear user profile from local storage
+        try {
+          await clearUserProfile();
+          console.log('AuthContext - User profile cleared from local storage on logout');
+        } catch (error) {
+          console.error('Error clearing user profile from local storage:', error);
+          // Don't throw - logout should still succeed
+        }
   };
 
   const updateProfile = async (updates: Partial<User>): Promise<User> => {

@@ -19,6 +19,7 @@ export async function initializeDatabase(): Promise<SQLite.SQLiteDatabase> {
       auth_user_id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       organizationid TEXT NOT NULL,
+      email TEXT,
       updated_at INTEGER NOT NULL
     );
 
@@ -115,6 +116,18 @@ export async function initializeDatabase(): Promise<SQLite.SQLiteDatabase> {
     }
   }
 
+  try {
+    await db.execAsync(`
+      -- Add email column to user_profile if it doesn't exist
+      ALTER TABLE user_profile ADD COLUMN email TEXT;
+    `);
+  } catch (error: any) {
+    // Column might already exist, ignore error
+    if (!error?.message?.includes('duplicate column')) {
+      console.warn('Migration: email column in user_profile may already exist:', error);
+    }
+  }
+
   return db;
 }
 
@@ -123,17 +136,22 @@ export interface LocalUserProfile {
   authUserId: string;
   userId: string;
   organizationId: string;
+  email?: string;
   updatedAt: number;
 }
 
-export async function saveUserProfile(authUserId: string, userId: string, organizationId: string): Promise<void> {
+export async function saveUserProfile(authUserId: string, userId: string, organizationId?: string, email?: string): Promise<void> {
   const database = await initializeDatabase();
+  
+  // For single-organization systems, organizationId is optional
+  // Use empty string or a default value if not provided
+  const orgId = organizationId || '';
   
   await database.runAsync(
     `INSERT OR REPLACE INTO user_profile 
-     (auth_user_id, user_id, organizationid, updated_at)
-     VALUES (?, ?, ?, ?)`,
-    [authUserId, userId, organizationId, Date.now()]
+     (auth_user_id, user_id, organizationid, email, updated_at)
+     VALUES (?, ?, ?, ?, ?)`,
+    [authUserId, userId, orgId, email || null, Date.now()]
   );
 }
 
@@ -144,6 +162,7 @@ export async function getUserProfile(authUserId: string): Promise<LocalUserProfi
     auth_user_id: string;
     user_id: string;
     organizationid: string;
+    email: string | null;
     updated_at: number;
   }>('SELECT * FROM user_profile WHERE auth_user_id = ?', [authUserId]);
 
@@ -155,6 +174,7 @@ export async function getUserProfile(authUserId: string): Promise<LocalUserProfi
     authUserId: result.auth_user_id,
     userId: result.user_id,
     organizationId: result.organizationid,
+    email: result.email || undefined,
     updatedAt: result.updated_at,
   };
 }
@@ -167,19 +187,55 @@ export async function getCurrentUserProfile(): Promise<LocalUserProfile | null> 
     auth_user_id: string;
     user_id: string;
     organizationid: string;
+    email: string | null;
     updated_at: number;
   }>('SELECT * FROM user_profile ORDER BY updated_at DESC LIMIT 1');
 
-  if (!result) {
-    return null;
+  if (result) {
+    return {
+      authUserId: result.auth_user_id,
+      userId: result.user_id,
+      organizationId: result.organizationid,
+      email: result.email || undefined,
+      updatedAt: result.updated_at,
+    };
   }
 
-  return {
-    authUserId: result.auth_user_id,
-    userId: result.user_id,
-    organizationId: result.organizationid,
-    updatedAt: result.updated_at,
-  };
+  // If not in local storage, try to fetch from API and save it
+  // This provides resilience if profile wasn't saved during login
+  try {
+    const { apiClient } = await import('@/lib/api/client');
+    const response = await apiClient.get<any>('/auth/profile');
+    
+    if (response.success && response.data) {
+      const userProfile = response.data;
+      
+      if (userProfile.id) {
+        // Save to local storage for future use
+        // organizationId is optional for single-organization systems
+        await saveUserProfile(
+          userProfile.id,
+          userProfile.id,
+          userProfile.organizationId, // May be undefined for single-org systems
+          userProfile.email
+        );
+        console.log('✅ [offlineStorage.getCurrentUserProfile] Fetched and saved user profile from API');
+        
+        return {
+          authUserId: userProfile.id,
+          userId: userProfile.id,
+          organizationId: userProfile.organizationId || '', // Default to empty string if not provided
+          email: userProfile.email,
+          updatedAt: Date.now(),
+        };
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ [offlineStorage.getCurrentUserProfile] Could not fetch profile from API:', error);
+    // Don't throw - return null instead
+  }
+
+  return null;
 }
 
 export async function clearUserProfile(): Promise<void> {
